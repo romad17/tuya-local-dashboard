@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tuya Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1419; --card: #1a212b; --border: #2a3441; --text: #e6edf3;
+    --muted: #8b98a8; --on: #2ea043; --off: #4b5563; --accent: #3b82f6; --err: #f85149; --warn: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; flex: 1; }
+  #status { font-size: 13px; color: var(--muted); }
+  #status.err { color: var(--err); }
+  button { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  main { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; padding: 24px; align-items: start; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card.offline { opacity: .65; }
+  .top { display: flex; align-items: flex-start; gap: 10px; }
+  .top .titles { flex: 1; min-width: 0; }
+  .card h2 { font-size: 16px; margin: 0; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--on); flex: none; }
+  .offline .dot { background: var(--off); }
+  .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .badge { display: inline-block; font-size: 11px; border-radius: 4px; padding: 1px 6px; margin-top: 8px; }
+  .badge.warn { background: rgba(210,153,34,.15); color: var(--warn); }
+  .badge.off { background: rgba(139,152,168,.15); color: var(--muted); }
+
+  .mains { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .mainrow { display: flex; align-items: center; justify-content: space-between; font-size: 14px; }
+  .toggle { width: 44px; height: 24px; border-radius: 12px; border: none; background: var(--off); position: relative; padding: 0; flex: none; }
+  .toggle::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .toggle.on { background: var(--on); }
+  .toggle.on::after { transform: translateX(20px); }
+  .toggle.big { width: 64px; height: 34px; border-radius: 17px; }
+  .toggle.big::after { top: 4px; left: 4px; width: 26px; height: 26px; }
+  .toggle.big.on::after { transform: translateX(30px); }
+
+  .tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px; }
+  .tile { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .tile .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .tile .v { font-size: 18px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tile .v small { font-size: 12px; color: var(--muted); margin-left: 2px; }
+
+  details { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--muted); user-select: none; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); font-size: 13px; }
+  details summary + .row { margin-top: 8px; }
+  .row .code { color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .row .val { font-variant-numeric: tabular-nums; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .val.mute { color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+  input[type=number], select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; width: 80px; }
+  select { width: auto; }
+  .adv-note { font-size: 11px; color: var(--muted); margin: 6px 0 0; }
+  #empty { grid-column: 1 / -1; color: var(--muted); text-align: center; padding: 48px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tuya Dashboard</h1>
+  <span id="status">Connecting…</span>
+  <button id="refresh">Refresh</button>
+</header>
+<main id="grid"><div id="empty">Loading devices…</div></main>
+
+<script>
+const grid = document.getElementById('grid');
+const statusEl = document.getElementById('status');
+
+// Codes shown as big tiles at the top of a card, in this order
+const SUMMARY = [
+  ['cur_power', 'Power'],
+  ['cur_voltage', 'Voltage'],
+  ['cur_current', 'Current'],
+  ['add_ele', 'Energy'],
+  ['va_temperature', 'Temperature'],
+  ['va_humidity', 'Humidity'],
+  ['battery_percentage', 'Battery'],
+];
+const SUMMARY_CODES = new Set(SUMMARY.map(([c]) => c));
+// Never offer a control for these, even if Tuya says they are writable
+const NEVER_CONTROL = new Set(['online_state']);
+// Technical values: shown muted inside Advanced
+const NOISE = new Set(['voltage_coe', 'electric_coe', 'power_coe', 'electricity_coe', 'test_bit',
+  'alarm_set_1', 'alarm_set_2', 'cycle_time', 'random_time', 'switch_inching']);
+
+const openCards = new Set(); // remembers which "Advanced" sections are open across refreshes
+let lastState = { devices: [] };
+
+function el(tag, props = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e[k] = v;
+  }
+  for (const c of children) e.append(c);
+  return e;
+}
+
+function fmt(dp) {
+  let v = dp.display;
+  if (typeof v === 'boolean') v = v ? 'on' : 'off';
+  if (v === '' || v === undefined || v === null) return '–';
+  return dp.unit ? `${v} ${dp.unit}` : String(v);
+}
+
+function ago(ts) {
+  if (!ts) return '';
+  const ms = ts > 1e12 ? ts : ts * 1000;
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 90) return 'just now';
+  if (s < 5400) return Math.round(s / 60) + ' min ago';
+  if (s < 172800) return Math.round(s / 3600) + ' h ago';
+  return Math.round(s / 86400) + ' days ago';
+}
+
+async function sendCommand(dev, dp, value, ctl, confirmText) {
+  if (confirmText && !confirm(confirmText)) {
+    // put the control back the way it was
+    if (ctl && 'value' in ctl && ctl.tagName === 'SELECT') ctl.value = dp.value;
+    return;
+  }
+  if (ctl) ctl.disabled = true;
+  try {
+    const res = await fetch(`/api/devices/${dev.id}/commands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: dp.code, value }),
+    });
+    const body = await res.json();
+    if (!body.ok) throw new Error(body.error || 'Command failed');
+  } catch (e) {
+    alert(`Command failed: ${e.message}`);
+  }
+  // The card is re-rendered when the updated status arrives over SSE.
+  setTimeout(() => { if (ctl) ctl.disabled = false; }, 3000);
+}
+
+const isMainSwitch = (dp) => /^switch(_\d+)?$/.test(dp.code) && dp.type === 'Boolean' && dp.writable;
+
+function mainSwitchRow(dev, dp, multi) {
+  const label = multi ? dp.code : 'Power';
+  return el('div', { class: 'mainrow' },
+    el('span', { textContent: label }),
+    el('button', {
+      class: 'toggle big' + (dp.value ? ' on' : ''),
+      title: dp.value ? 'Turn off' : 'Turn on',
+      disabled: !dev.online,
+      onclick: (e) => sendCommand(dev, dp, !dp.value, e.currentTarget),
+    }));
+}
+
+// Advanced rows: every change asks for confirmation first
+function advancedRow(dev, dp) {
+  const label = el('span', { class: 'code', textContent: dp.code });
+  const canControl = dev.online && dp.writable && !NEVER_CONTROL.has(dp.code);
+  const ask = (v) => `Change "${dp.code}" on ${dev.name} to ${v}?`;
+  let control;
+
+  if (dp.type === 'Boolean' && canControl) {
+    control = el('button', {
+      class: 'toggle' + (dp.value ? ' on' : ''),
+      onclick: (e) => sendCommand(dev, dp, !dp.value, e.currentTarget, ask(!dp.value)),
+    });
+  } else if (dp.type === 'Enum' && canControl && Array.isArray(dp.range)) {
+    control = el('select', {
+      onchange: (e) => sendCommand(dev, dp, e.target.value, e.target, ask(e.target.value)),
+    }, ...dp.range.map((r) => el('option', { value: r, textContent: r, selected: r === dp.value })));
+  } else if (dp.type === 'Integer' && canControl) {
+    const input = el('input', {
+      type: 'number', value: dp.display,
+      min: dp.min != null ? dp.min / 10 ** dp.scale : undefined,
+      max: dp.max != null ? dp.max / 10 ** dp.scale : undefined,
+      step: dp.scale ? 1 / 10 ** dp.scale : 1,
+    });
+    const set = el('button', {
+      textContent: 'Set',
+      onclick: (e) => {
+        const raw = Math.round(Number(input.value) * 10 ** dp.scale);
+        sendCommand(dev, dp, raw, e.currentTarget, ask(input.value));
+      },
+    });
+    control = el('span', {}, input, ' ', set);
+  } else {
+    control = el('span', { class: 'val' + (NOISE.has(dp.code) ? ' mute' : ''), textContent: fmt(dp), title: fmt(dp) });
+  }
+  return el('div', { class: 'row' }, label, control);
+}
+
+function renderCard(dev) {
+  const mains = dev.dps.filter(isMainSwitch);
+  const tiles = SUMMARY.map(([code, label]) => [dev.dps.find((d) => d.code === code), label]).filter(([d]) => d);
+  const rest = dev.dps.filter((d) => !isMainSwitch(d) && !SUMMARY_CODES.has(d.code));
+  const fault = dev.dps.find((d) => d.code === 'fault' && Number(d.value) !== 0);
+
+  const card = el('section', { class: 'card' + (dev.online ? '' : ' offline'), id: 'dev-' + dev.id });
+  card.append(el('div', { class: 'top' },
+    el('div', { class: 'titles' },
+      el('h2', {}, el('span', { class: 'dot' }), dev.name),
+      el('div', { class: 'sub', textContent: `${dev.product} · ${dev.online ? 'online' : 'offline'}` }))));
+
+  if (!dev.online) {
+    const when = ago(dev.updateTime);
+    card.append(el('span', { class: 'badge off', textContent: 'Offline · last known values' + (when ? ` (${when})` : '') }));
+  }
+  if (fault) card.append(el('span', { class: 'badge warn', textContent: `⚠ fault code ${fault.value}` }));
+
+  if (mains.length) {
+    card.append(el('div', { class: 'mains' }, ...mains.map((dp) => mainSwitchRow(dev, dp, mains.length > 1))));
+  }
+  if (tiles.length) {
+    card.append(el('div', { class: 'tiles' }, ...tiles.map(([dp, label]) =>
+      el('div', { class: 'tile' },
+        el('div', { class: 'l', textContent: label }),
+        el('div', { class: 'v' }, String(dp.display === '' ? '–' : typeof dp.display === 'boolean' ? (dp.display ? 'on' : 'off') : dp.display),
+          ...(dp.unit ? [el('small', { textContent: dp.unit })] : []))))));
+  }
+  if (rest.length) {
+    const d = el('details', {}, el('summary', { textContent: `Advanced (${rest.length})` }),
+      ...rest.map((dp) => advancedRow(dev, dp)),
+      el('p', { class: 'adv-note', textContent: 'Changes here ask for confirmation first.' }));
+    d.open = openCards.has(dev.id);
+    d.addEventListener('toggle', () => { d.open ? openCards.add(dev.id) : openCards.delete(dev.id); });
+    card.append(d);
+  }
+  return card;
+}
+
+function render(state) {
+  lastState = state;
+  if (state.error) {
+    statusEl.textContent = 'Error: ' + state.error;
+    statusEl.className = 'err';
+  } else if (state.updatedAt) {
+    statusEl.textContent = 'Updated ' + new Date(state.updatedAt).toLocaleTimeString();
+    statusEl.className = '';
+  }
+
+  if (!state.devices.length) {
+    grid.replaceChildren(el('div', { id: 'empty', textContent: state.error ? 'Could not load devices.' : 'No devices found.' }));
+    return;
+  }
+
+  // Online devices first, then by name
+  const devices = [...state.devices].sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
+  const existing = new Map([...grid.querySelectorAll('.card')].map((c) => [c.id, c]));
+  const ordered = devices.map((dev) => {
+    const old = existing.get('dev-' + dev.id);
+    // Don't clobber a card the user is currently interacting with
+    return old && old.contains(document.activeElement) ? old : renderCard(dev);
+  });
+  grid.replaceChildren(...ordered);
+}
+
+function connect() {
+  const es = new EventSource('/api/events');
+  es.onmessage = (e) => render(JSON.parse(e.data));
+  es.onerror = () => {
+    statusEl.textContent = 'Reconnecting…';
+    statusEl.className = 'err';
+  };
+}
+
+document.getElementById('refresh').addEventListener('click', () => fetch('/api/refresh', { method: 'POST' }));
+connect();
+</script>
+</body>
+</html>
