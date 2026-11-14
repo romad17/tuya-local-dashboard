@@ -72,6 +72,7 @@
   .chart { margin-top: 16px; }
   .ctitle { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
   .hmsg { color: var(--muted); padding: 32px 0; text-align: center; }
+  .hnote { font-size: 12px; color: var(--muted); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 12px 0 0; }
   .u-legend { color: var(--text); font-size: 12px; }
 </style>
 </head>
@@ -294,9 +295,10 @@ function openHistory(dev) {
   loadHistory();
 }
 
-function addChart(title, unit, color, x, y, bars) {
+function addChart(title, unit, color, x, y, bars, atTop) {
   const wrap = el('div', { class: 'chart' }, el('div', { class: 'ctitle', textContent: unit ? `${title} (${unit})` : title }));
-  histBody.append(wrap);
+  if (atTop) histBody.prepend(wrap);
+  else histBody.append(wrap);
   const ax = { stroke: '#8b98a8', grid: { stroke: '#2a3441', width: 1 }, ticks: { stroke: '#2a3441', width: 1 } };
   const series = bars
     ? { label: title, stroke: color, fill: color + 'cc', width: 1, paths: uPlot.paths.bars({ size: [0.6, 100] }), points: { show: false } }
@@ -359,6 +361,29 @@ async function loadHistory() {
     drawn++;
   }
   if (!drawn) note('No history in this range yet. Readings are recorded while the server is running.');
+  await loadCloudStats(token);
+}
+
+// Tuya's own daily energy numbers (what the Smart Life app shows), fetched after the local charts
+async function loadCloudStats(token) {
+  const dp = histDev.dps.find((d) => d.code === 'add_ele');
+  if (!dp) return;
+  const days = Math.min(90, Math.max(7, Math.ceil(histHours / 24)));
+  let r;
+  try {
+    r = await (await fetch(`/api/cloud-stats?dev=${encodeURIComponent(histDev.id)}&days=${days}`)).json();
+  } catch (e) {
+    r = { available: false, error: e.message };
+  }
+  if (token !== histToken) return;
+  const empty = histBody.querySelector('.hmsg');
+  if (!r.available) {
+    const why = r.hint || r.error || r.reason || 'unknown error';
+    histBody.prepend(el('p', { class: 'hnote', textContent: `Tuya cloud statistics unavailable: ${why}${r.code ? ` (code ${r.code})` : ''}` }));
+    return;
+  }
+  if (empty) empty.remove();
+  addChart(`Daily energy, Tuya cloud statistics (kWh) · total ${r.total}`, '', '#14b8a6', r.x, r.y, true, true);
 }
 
 function render(state) {

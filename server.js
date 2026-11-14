@@ -224,6 +224,74 @@ app.post('/api/devices/:id/commands', async (req, res) => {
   }
 });
 
+// ---- Tuya cloud statistics: the numbers behind the Smart Life app's "Electricity Statistics"
+// GET /api/cloud-stats?dev=<id>&days=<n>  ->  daily kWh from Tuya's own meter data (add_ele)
+const STATS_TTL_MS = 10 * 60 * 1000;
+const statsCache = new Map();
+const STATS_HINTS = {
+  28841101: 'The Statistics service is not enabled for this project. Others report it has to be requested through Tuya support.',
+  2007: 'Statistics are not enabled for this data point on this product (a Tuya-side product setting).',
+  28841002: 'An API subscription is missing. Check the Service API tab of your project.',
+  1106: 'Permission denied. Check the Service API subscriptions and that the device is linked to the project.',
+  1004: 'Request signature rejected. Check the Access ID and Secret.',
+};
+const ymd = (d) =>
+  `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+
+app.get('/api/cloud-stats', async (req, res) => {
+  const id = String(req.query.dev || '');
+  const dev = state.devices.find((d) => d.id === id);
+  if (!dev) return res.status(404).json({ available: false, error: 'Unknown device' });
+  const code = 'add_ele';
+  if (!dev.dps.some((d) => d.code === code)) {
+    return res.json({ available: false, reason: 'This device has no energy counter (add_ele).' });
+  }
+  const days = Math.min(90, Math.max(1, Number(req.query.days) || 7));
+  const today = new Date();
+  const cacheKey = `${id}|${days}|${ymd(today)}`;
+  const hit = statsCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < STATS_TTL_MS) return res.json(hit.value);
+
+  try {
+    // Ask Tuya how this data point is aggregated; energy counters are usually "sum" or "minux".
+    let statType = 'sum';
+    try {
+      const types = await api('GET', `/v1.0/devices/${id}/all-statistic-type`, { query: { code } });
+      const t = (Array.isArray(types) ? types : []).find((x) => x.code === code);
+      const first = t && String(t.stat_type || '').split(/[\s,|]+/).filter(Boolean)[0];
+      if (first) statType = first;
+    } catch (e) {
+      console.warn(`all-statistic-type failed for ${id}: ${e.message} (using "sum")`);
+    }
+
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
+    const result = await api('GET', `/v1.0/devices/${id}/statistics/days`, {
+      query: { code, start_day: ymd(start), end_day: ymd(today), stat_type: statType },
+    });
+    const map = (result && result.days) || {};
+
+    const x = [];
+    const y = [];
+    let total = 0;
+    for (let i = 0; i < days; i++) {
+      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      const n = Number(map[ymd(d)]);
+      x.push(Math.floor(d.getTime() / 1000));
+      y.push(Number.isFinite(n) ? n : null);
+      if (Number.isFinite(n)) total += n;
+    }
+    const value = {
+      available: true, code, statType,
+      x, y, total: Number(total.toFixed(3)),
+      rawSample: Object.entries(map).slice(-3), // lets you compare Tuya's raw values with the app
+    };
+    statsCache.set(cacheKey, { at: Date.now(), value });
+    res.json(value);
+  } catch (e) {
+    res.json({ available: false, error: e.message, code: e.code, hint: STATS_HINTS[e.code] || null });
+  }
+});
+
 app.post('/api/refresh', async (_req, res) => {
   await refreshAll();
   res.json({ ok: true });

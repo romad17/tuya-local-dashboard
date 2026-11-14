@@ -58,6 +58,20 @@ Every poll, the server saves readings (power, voltage, current, energy counter, 
 - **Backup / reset:** copy or delete the `data/` folder. It is git-ignored. On Docker, mount `data/` as a volume so history survives updates.
 - Requires **Node 22.13 or newer** (uses the built-in `node:sqlite`). On older Node the dashboard still works, but without history.
 
+## Tuya cloud statistics (same numbers as the app)
+
+For devices with an energy counter (`add_ele`, e.g. the solar pump switches), the History window also shows **Daily energy, Tuya cloud statistics**: the data behind the Smart Life app's *Electricity Statistics* screen. Unlike the local recording, it also covers the time the dashboard wasn't running, going back to when the device joined the cloud.
+
+It uses Tuya's Device Data Statistics API (`/v1.0/devices/{id}/statistics/days`). Whether it works depends on your Tuya project, so if it fails the History window shows why instead of a chart:
+
+| Code | Meaning |
+|---|---|
+| `28841101` | The Statistics service isn't enabled for the project. Reports from other developers say it has to be requested through Tuya support rather than a normal subscribe button. |
+| `2007` | Statistics aren't enabled for that data point on that product (a Tuya-side product setting). |
+| `28841002` / `1106` | An API subscription or permission is missing (Service API tab). |
+
+To compare with the app, open `http://localhost:3000/api/cloud-stats?dev=<device id>&days=30`. `rawSample` shows Tuya's untouched values for the last days, and `total` is the sum. If the numbers are off by a factor like 1000, tell me so the scaling can be adjusted.
+
 ## Troubleshooting
 
 | Error | Likely cause |
