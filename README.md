@@ -10,7 +10,7 @@ The Access Secret stays in `.env` on your machine. The server listens on `127.0.
 
 ## Setup (Windows)
 
-1. Install Node.js LTS (18 or newer) from https://nodejs.org
+1. Install Node.js LTS (22.13 or newer) from https://nodejs.org
 2. In the Tuya developer platform open your project -> **Overview** and copy the **Access ID** and **Access Secret**.
 3. Copy `.env.example` to `.env` and fill in `TUYA_ACCESS_ID` and `TUYA_ACCESS_SECRET`.
 4. In a terminal in this folder:
@@ -46,6 +46,17 @@ Linux / Synology / Docker:
 TUYA_ACCESS_ID=... TUYA_ACCESS_SECRET=... npm start
 # or: docker run -e TUYA_ACCESS_ID=... -e TUYA_ACCESS_SECRET=... ...
 ```
+
+## History and charts
+
+Every poll, the server saves readings (power, voltage, current, energy counter, temperature, humidity, battery) into a local SQLite file, `data/history.db`. Click **History** on a device card to see charts for 6 h, 24 h, 7 d or 30 d, plus a daily energy bar chart.
+
+- **It only records while the server is running.** If your PC is off or the server is stopped, that time is a gap in the charts (shown as a break in the line, never bridged). Running it on an always-on machine, like the Synology, gives continuous history.
+- **Daily energy (kWh)** is calculated by integrating the power readings over time. It doesn't depend on the device's own `add_ele` counter, whose meaning differs between devices. The `add_ele` counter is charted separately as-is.
+- **Storage is small.** An unchanged value is saved only every 5 minutes, so expect a few MB per month for ~10 devices. `HISTORY_DAYS` (default 365) sets how long data is kept.
+- **Finer detail:** lower `POLL_SECONDS` (minimum 10), at the cost of more API calls.
+- **Backup / reset:** copy or delete the `data/` folder. It is git-ignored. On Docker, mount `data/` as a volume so history survives updates.
+- Requires **Node 22.13 or newer** (uses the built-in `node:sqlite`). On older Node the dashboard still works, but without history.
 
 ## Troubleshooting
 

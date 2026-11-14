@@ -7,11 +7,12 @@
     "start": "node server.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13"
   },
   "dependencies": {
     "@tuya/tuya-connector-nodejs": "^2.1.2",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "uplot": "^1.6.32"
   }
 }

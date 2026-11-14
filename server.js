@@ -9,6 +9,7 @@ const { TUYA_ACCESS_ID, TUYA_ACCESS_SECRET } = process.env;
 const BASE_URL = process.env.TUYA_BASE_URL || 'https://openapi.tuyaeu.com';
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(10, Number(process.env.POLL_SECONDS || 30));
+const HISTORY_DAYS = Math.max(1, Number(process.env.HISTORY_DAYS || 365));
 const DEVICE_IDS = (process.env.DEVICE_IDS || '')
   .split(',')
   .map((s) => s.trim())
@@ -18,6 +19,9 @@ if (!TUYA_ACCESS_ID || !TUYA_ACCESS_SECRET) {
   console.error('Missing TUYA_ACCESS_ID / TUYA_ACCESS_SECRET. Set them as environment variables, or copy .env.example to .env and fill them in.');
   process.exit(1);
 }
+
+// Local history database (data/history.db); null if this Node has no node:sqlite
+const history = require('./history').open(path.join(__dirname, 'data'), HISTORY_DAYS);
 
 const tuya = new TuyaContext({
   baseUrl: BASE_URL,
@@ -137,6 +141,7 @@ async function refreshAll() {
       out.push(present(d, await getSpec(d.id)));
     }
     state = { updatedAt: Date.now(), error: null, devices: out };
+    if (history) history.record(out, state.updatedAt);
   } catch (e) {
     console.error('refresh failed:', e.message);
     state = { ...state, error: e.message };
@@ -180,8 +185,12 @@ app.use((req, res, next) => {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/vendor/uplot', express.static(path.join(__dirname, 'node_modules', 'uplot', 'dist')));
 
 app.get('/api/devices', (_req, res) => res.json(state));
+
+if (history) history.routes(app, () => state);
+else app.get('/api/history', (_req, res) => res.json({ enabled: false }));
 
 app.get('/api/events', (req, res) => {
   res.set({

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tuya Dashboard</title>
+<link rel="stylesheet" href="/vendor/uplot/uPlot.min.css">
 <style>
   :root {
     --bg: #0f1419; --card: #1a212b; --border: #2a3441; --text: #e6edf3;
@@ -59,6 +60,19 @@
   select { width: auto; }
   .adv-note { font-size: 11px; color: var(--muted); margin: 6px 0 0; }
   #empty { grid-column: 1 / -1; color: var(--muted); text-align: center; padding: 48px 0; }
+
+  .hbtn { font-size: 12px; padding: 3px 9px; flex: none; }
+  dialog { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 0; width: min(900px, 94vw); max-height: 90vh; overflow: auto; }
+  dialog::backdrop { background: rgba(0,0,0,.65); }
+  .hwrap { padding: 16px 20px 20px; }
+  .hhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .hhead h3 { margin: 0; font-size: 17px; flex: 1; }
+  #hranges { display: flex; gap: 4px; }
+  #hranges button.active { background: var(--accent); border-color: var(--accent); }
+  .chart { margin-top: 16px; }
+  .ctitle { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .hmsg { color: var(--muted); padding: 32px 0; text-align: center; }
+  .u-legend { color: var(--text); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -69,6 +83,18 @@
 </header>
 <main id="grid"><div id="empty">Loading devices…</div></main>
 
+<dialog id="hist">
+  <div class="hwrap">
+    <div class="hhead">
+      <h3 id="htitle">History</h3>
+      <div id="hranges"></div>
+      <button id="hclose">Close</button>
+    </div>
+    <div id="hbody"></div>
+  </div>
+</dialog>
+
+<script src="/vendor/uplot/uPlot.iife.min.js"></script>
 <script>
 const grid = document.getElementById('grid');
 const statusEl = document.getElementById('status');
@@ -204,7 +230,8 @@ function renderCard(dev) {
   card.append(el('div', { class: 'top' },
     el('div', { class: 'titles' },
       el('h2', {}, el('span', { class: 'dot' }), dev.name),
-      el('div', { class: 'sub', textContent: `${dev.product} · ${dev.online ? 'online' : 'offline'}` }))));
+      el('div', { class: 'sub', textContent: `${dev.product} · ${dev.online ? 'online' : 'offline'}` })),
+    ...(tiles.length ? [el('button', { class: 'hbtn', textContent: 'History', onclick: () => openHistory(dev) })] : [])));
 
   if (!dev.online) {
     const when = ago(dev.updateTime);
@@ -231,6 +258,107 @@ function renderCard(dev) {
     card.append(d);
   }
   return card;
+}
+
+// ---------------------------------------------------------------- History dialog
+
+const histDlg = document.getElementById('hist');
+const histBody = document.getElementById('hbody');
+const RANGES = [['6 h', 6], ['24 h', 24], ['7 d', 168], ['30 d', 720]];
+const CHARTS = {
+  cur_power:          { title: 'Power', color: '#f59e0b' },
+  cur_voltage:        { title: 'Voltage', color: '#3b82f6' },
+  cur_current:        { title: 'Current', color: '#a855f7' },
+  va_temperature:     { title: 'Temperature', color: '#ef4444' },
+  va_humidity:        { title: 'Humidity', color: '#06b6d4' },
+  temp_value:         { title: 'Device temperature', color: '#f97316' },
+  battery_percentage: { title: 'Battery', color: '#22c55e' },
+  add_ele:            { title: 'Energy counter (add_ele)', color: '#eab308' },
+};
+let histDev = null;
+let histHours = 24;
+let histToken = 0;
+let plots = [];
+
+const rangeButtons = RANGES.map(([label, hours]) =>
+  el('button', { textContent: label, onclick: () => { histHours = hours; loadHistory(); } }));
+document.getElementById('hranges').append(...rangeButtons);
+document.getElementById('hclose').addEventListener('click', () => histDlg.close());
+histDlg.addEventListener('click', (e) => { if (e.target === histDlg) histDlg.close(); });
+histDlg.addEventListener('close', () => { histToken++; plots.forEach((p) => p.destroy()); plots = []; });
+
+function openHistory(dev) {
+  histDev = dev;
+  document.getElementById('htitle').textContent = dev.name + ' – history';
+  histDlg.showModal();
+  loadHistory();
+}
+
+function addChart(title, unit, color, x, y, bars) {
+  const wrap = el('div', { class: 'chart' }, el('div', { class: 'ctitle', textContent: unit ? `${title} (${unit})` : title }));
+  histBody.append(wrap);
+  const ax = { stroke: '#8b98a8', grid: { stroke: '#2a3441', width: 1 }, ticks: { stroke: '#2a3441', width: 1 } };
+  const series = bars
+    ? { label: title, stroke: color, fill: color + 'cc', width: 1, paths: uPlot.paths.bars({ size: [0.6, 100] }), points: { show: false } }
+    : { label: title, stroke: color, width: 2, spanGaps: false };
+  let xAxis = ax;
+  let scales = { x: { time: true } };
+  if (bars) {
+    // Daily bars: one label per day (thinned out for long ranges), y starting at zero
+    const every = Math.ceil(x.length / 10);
+    const ticks = x.filter((_, i) => i % every === 0);
+    xAxis = {
+      ...ax,
+      splits: () => ticks,
+      values: (u, splits) => splits.map((v) => new Date(v * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'numeric' })),
+    };
+    scales = {
+      x: { time: true, range: (u, min, max) => [min - 43200, max + 43200] },
+      y: { range: (u, min, max) => [0, Math.max(max * 1.15, 0.01)] },
+    };
+  }
+  const opts = {
+    width: Math.max(300, wrap.clientWidth),
+    height: 170,
+    scales,
+    axes: [xAxis, { ...ax, size: 60 }],
+    series: [{}, series],
+  };
+  plots.push(new uPlot(opts, [x, y], wrap));
+}
+
+async function loadHistory() {
+  const token = ++histToken;
+  plots.forEach((p) => p.destroy());
+  plots = [];
+  rangeButtons.forEach((b, i) => b.classList.toggle('active', RANGES[i][1] === histHours));
+  const note = (text) => histBody.replaceChildren(el('p', { class: 'hmsg', textContent: text }));
+  note('Loading…');
+
+  let data;
+  try {
+    data = await (await fetch(`/api/history?dev=${encodeURIComponent(histDev.id)}&hours=${histHours}`)).json();
+  } catch (e) {
+    data = { error: e.message };
+  }
+  if (token !== histToken) return; // a newer request replaced this one
+  if (data.enabled === false) return note('History is off: it needs Node 22.13 or newer.');
+  if (data.error) return note('Could not load history: ' + data.error);
+
+  histBody.replaceChildren();
+  const byCode = new Map(data.series.map((s) => [s.code, s]));
+  let drawn = 0;
+  if (data.energy) {
+    addChart('Daily energy, from power readings', 'kWh', '#10b981', data.energy.x, data.energy.y, true);
+    drawn++;
+  }
+  for (const [code, def] of Object.entries(CHARTS)) {
+    const s = byCode.get(code);
+    if (!s) continue;
+    addChart(def.title, s.unit, def.color, s.x, s.y);
+    drawn++;
+  }
+  if (!drawn) note('No history in this range yet. Readings are recorded while the server is running.');
 }
 
 function render(state) {
