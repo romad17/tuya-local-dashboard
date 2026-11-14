@@ -15,7 +15,7 @@ const DEVICE_IDS = (process.env.DEVICE_IDS || '')
   .filter(Boolean);
 
 if (!TUYA_ACCESS_ID || !TUYA_ACCESS_SECRET) {
-  console.error('Missing TUYA_ACCESS_ID / TUYA_ACCESS_SECRET. Copy .env.example to .env and fill them in.');
+  console.error('Missing TUYA_ACCESS_ID / TUYA_ACCESS_SECRET. Set them as environment variables, or copy .env.example to .env and fill them in.');
   process.exit(1);
 }
 

@@ -21,6 +21,32 @@ The Access Secret stays in `.env` on your machine. The server listens on `127.0.
    (or just double-click `start.bat`)
 5. Open http://localhost:3000
 
+## Credentials from environment variables instead of `.env`
+
+`.env` is optional. If `TUYA_ACCESS_ID` and `TUYA_ACCESS_SECRET` are already set in your environment, they are used, and they take priority over anything in `.env`. The other settings (`TUYA_BASE_URL`, `PORT`, `POLL_SECONDS`, `DEVICE_IDS`) work the same way.
+
+Windows PowerShell, saved for your user (applies to terminals opened afterwards):
+
+```powershell
+[Environment]::SetEnvironmentVariable('TUYA_ACCESS_ID', 'your_access_id', 'User')
+[Environment]::SetEnvironmentVariable('TUYA_ACCESS_SECRET', 'your_access_secret', 'User')
+```
+
+Or for the current terminal only:
+
+```powershell
+$env:TUYA_ACCESS_ID = 'your_access_id'
+$env:TUYA_ACCESS_SECRET = 'your_access_secret'
+npm start
+```
+
+Linux / Synology / Docker:
+
+```bash
+TUYA_ACCESS_ID=... TUYA_ACCESS_SECRET=... npm start
+# or: docker run -e TUYA_ACCESS_ID=... -e TUYA_ACCESS_SECRET=... ...
+```
+
 ## Troubleshooting
 
 | Error | Likely cause |
